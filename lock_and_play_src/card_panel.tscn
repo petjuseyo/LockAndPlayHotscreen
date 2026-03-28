@@ -1,0 +1,91 @@
+[gd_scene load_steps=2 format=3 uid="uid://tcxw5lh3ggvg"]
+
+[sub_resource type="GDScript" id="GDScript_ymydt"]
+script/source = "extends PanelContainer
+
+var Utils = preload(\"Utils.gd\")
+var Data = preload(\"Data.gd\")
+
+## game id of this card panel
+var id: String
+
+signal minigame_toggled(id: String, toggled_on: bool)
+signal configure_pressed(id: String)
+
+
+func init(game_id: String) -> void:
+	id = game_id
+	$MarginContainer/VBoxContainer/HBoxContainer/TitleLabel.text = Data.games[id].name
+	$MarginContainer/VBoxContainer/HBoxContainer/IconLabel.text = Data.games[id].icon
+	$MarginContainer/VBoxContainer/DescLabel.text = Data.games[id].desc
+	$MarginContainer/VBoxContainer/HBoxContainer/EnableModCheckButton.button_pressed = Data.games[id].enabled
+	$MarginContainer/VBoxContainer/ConfigureButton.disabled = !Data.games[id].enabled
+
+
+func _on_button_configure_pressed() -> void:
+	if not Data.games[id].enabled:
+		return
+	
+	configure_pressed.emit(id)
+
+
+func _on_check_button_enable_toggled(toggled_on: bool) -> void:
+	Data.games[id].enabled = toggled_on
+	$MarginContainer/VBoxContainer/ConfigureButton.disabled = !Data.games[id].enabled
+	# no used but could be useful:
+	minigame_toggled.emit(id, toggled_on)
+	
+"
+
+[node name="PanelContainer" type="PanelContainer"]
+script = SubResource("GDScript_ymydt")
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="IconLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "🧩"
+
+[node name="TitleLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"HeaderLarge"
+theme_override_font_sizes/font_size = 20
+text = "mod title"
+horizontal_alignment = 1
+
+[node name="EnableModCheckButton" type="CheckButton" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_direction = 3
+layout_mode = 2
+button_pressed = true
+alignment = 1
+
+[node name="DescLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
+autowrap_mode = 3
+text_overrun_behavior = 3
+max_lines_visible = 3
+
+[node name="ConfigureButton" type="Button" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+text = "⚙️ Configure"
+
+[connection signal="toggled" from="MarginContainer/VBoxContainer/HBoxContainer/EnableModCheckButton" to="." method="_on_check_button_enable_toggled"]
+[connection signal="pressed" from="MarginContainer/VBoxContainer/ConfigureButton" to="." method="_on_button_configure_pressed"]

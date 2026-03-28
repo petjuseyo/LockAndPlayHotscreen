@@ -1,0 +1,254 @@
+[gd_scene load_steps=2 format=3 uid="uid://c6gqfm1526dpc"]
+
+[sub_resource type="GDScript" id="GDScript_a4180"]
+script/source = "extends VBoxContainer
+
+##
+## mod stuff
+##
+
+var Utils = preload(\"Utils.gd\")
+var Data = preload(\"Data.gd\")
+
+# Data.Action
+signal game_event(action: Dictionary)
+
+#var _game_data: Dictionary
+
+##
+## variables for running the game itself
+##
+const DIE_SIZE := 64
+const ROLL_TIME := 1.6
+
+const PIP_RADIUS := 5
+
+var rng := RandomNumberGenerator.new()
+var rolling := false
+
+@onready var player_die := $HBoxContainer/PlayerVBoxContainer/PlayerDie
+@onready var cpu_die := $HBoxContainer/CpuVBoxContainer/CpuDie
+@onready var result_label := $ResultLabel
+@onready var roll_button := $RollButton
+
+
+func _ready() -> void:
+	rng.randomize()
+	roll_button.pressed.connect(start_roll)
+	_make_die_texture(player_die, 1)
+	_make_die_texture(cpu_die, 1)
+	
+	update_roll_ability()
+
+
+## Checks if the user is allowed to run the game. Disable the roll button if
+## needed. 
+func update_roll_ability():
+	roll_button.disabled = false
+	
+	if Data.games.dice.config_data.wait_time <= 0:
+		# no wait time configured, user can play as often as wanted
+		return
+	
+	var runs := Data.games.dice.game_data.runs_timestamps as Array
+	if runs.size() == 0:
+		# no run yet, no need to disable the roll button
+		return
+		
+	var last_run = runs.front()
+	var now = Time.get_unix_time_from_system()
+	var diff = now - last_run
+	
+	if int(diff) > Data.games.dice.config_data.wait_time:
+		roll_button.disabled = false
+	else:
+		roll_button.disabled = true
+		
+	
+
+func start_roll():
+	if rolling:
+		return
+	Data.game_started.emit({\"origin\": Data.Action.ORIGIN_DICE_GAME})
+	rolling = true
+	roll_button.disabled = true
+	result_label.text = \"Rolling...\"
+
+	_roll_die(player_die)
+	_roll_die(cpu_die)
+
+	await get_tree().create_timer(ROLL_TIME).timeout
+	finish_round()
+
+func _roll_die(die: Sprite2D):
+	var tween = create_tween()
+	tween.set_loops(int(ROLL_TIME / 0.2))
+	tween.tween_callback(func():
+		_make_die_texture(die, rng.randi_range(1, 6))
+	)
+	#tween.tween_property(die, \"rotation\", rng.randf_range(-0.3, 0.3), 0.1).as_relative().set_trans(Tween.TRANS_ELASTIC)
+	#tween.tween_property(die, \"rotation\", rng.randf_range(0.1, 0.45), 0.3).as_relative().set_trans(Tween.TRANS_CUBIC)
+	#no rotation:
+	tween.tween_property(die, \"rotation\", 0.0, 0.2)
+
+func finish_round():
+	var player_val := rng.randi_range(1, 6)
+	var cpu_val := rng.randi_range(1, 6)
+
+	_make_die_texture(player_die, player_val)
+	_make_die_texture(cpu_die, cpu_val)
+
+	var action = {
+		\"origin\": Data.Action.ORIGIN_DICE_GAME,
+		\"type\": Data.Action.ADD_TIME, # default to adding time if losing or draw
+		\"arg\": 0, # default to a draw
+	}
+	
+	var diff := player_val - cpu_val
+	
+	if absi(diff) > 0:
+		# multiply the score difference by the seconds set in config
+		var locktime_added_sec: int = diff * Data.games.dice.config_data.time_mult
+		# converts it to a human readable format: days, hours, minutes
+		var formatted_time = Utils.format_time_from_seconds(absi(locktime_added_sec))
+		
+		action.arg = absi(locktime_added_sec)
+		# display the results
+		if player_val > cpu_val:
+			action.type = Data.Action.REMOVE_TIME
+			result_label.text = \"You: %d | The bot: %d\\n[bgcolor=web_green]YOU WIN! Removed %s[/bgcolor]\" % [player_val, cpu_val, formatted_time]
+		else:
+			result_label.text = \"You: %d | The bot: %d\\n[bgcolor=crimson]YOU LOSE! Added %s[/bgcolor]\" % [player_val, cpu_val, formatted_time]
+		
+	else:
+		result_label.text = \"You: %d | The bot: %d\\n[bgcolor=web_green]DRAW![/bgcolor]\" % [player_val, cpu_val]
+	
+	# 1. First save the roll timne
+	Data.games.dice.game_data.runs_timestamps.push_front(Time.get_unix_time_from_system())
+	
+	# 2. Then fire action event for the main class to handle it. this will save Data!
+	game_event.emit(action)
+	
+	# 3. Signal a game ended
+	Data.game_ended.emit({\"origin\": Data.Action.ORIGIN_DICE_GAME})
+	
+	update_roll_ability()
+	
+	rolling = false
+
+func _make_die_texture(sprite: Sprite2D, value: int):
+	var img := Image.create(DIE_SIZE, DIE_SIZE, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.95, 0.95, 0.95))
+
+	# Border
+	for x in range(DIE_SIZE):
+		for y in range(DIE_SIZE):
+			if x < 2 or y < 2 or x > DIE_SIZE - 3 or y > DIE_SIZE - 3:
+				img.set_pixel(x, y, Color.BLACK)
+
+	var centers := {
+		\"tl\": Vector2(16, 16),
+		\"tr\": Vector2(48, 16),
+		\"ml\": Vector2(16, 32),
+		\"mr\": Vector2(48, 32),
+		\"bl\": Vector2(16, 48),
+		\"br\": Vector2(48, 48),
+		\"c\":  Vector2(32, 32)
+	}
+
+	var layout := {
+		1: [\"c\"],
+		2: [\"tl\", \"br\"],
+		3: [\"tl\", \"c\", \"br\"],
+		4: [\"tl\", \"tr\", \"bl\", \"br\"],
+		5: [\"tl\", \"tr\", \"c\", \"bl\", \"br\"],
+		6: [\"tl\", \"ml\", \"bl\", \"tr\", \"mr\", \"br\"]
+	}
+
+	for key in layout[value]:
+		_draw_pip(img, centers[key])
+
+	sprite.texture = ImageTexture.create_from_image(img)
+	sprite.rotation = 0
+
+func _draw_pip(img: Image, pos: Vector2):
+	for x in range(-PIP_RADIUS, PIP_RADIUS + 1):
+		for y in range(-PIP_RADIUS, PIP_RADIUS + 1):
+			if x * x + y * y <= PIP_RADIUS * PIP_RADIUS:
+				img.set_pixelv(pos + Vector2(x, y), Color.BLACK)
+"
+
+[node name="DiceGame" type="VBoxContainer"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -140.0
+offset_right = 200.0
+offset_bottom = 140.0
+alignment = 1
+script = SubResource("GDScript_a4180")
+
+[node name="Title" type="RichTextLabel" parent="."]
+layout_mode = 2
+bbcode_enabled = true
+text = "[center][font_size=22]🎲 Roll the dice[/font_size]
+If you score lower than the bot, time will be added. If you do better, time will be removed.[/center]"
+fit_content = true
+
+[node name="HBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+size_flags_vertical = 8
+alignment = 1
+
+[node name="PlayerVBoxContainer" type="VBoxContainer" parent="HBoxContainer"]
+custom_minimum_size = Vector2(80, 100)
+layout_mode = 2
+size_flags_horizontal = 10
+
+[node name="PlayerDie" type="Sprite2D" parent="HBoxContainer/PlayerVBoxContainer"]
+offset = Vector2(40, 40)
+
+[node name="PlayerLabel" type="Label" parent="HBoxContainer/PlayerVBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 10
+text = "You"
+horizontal_alignment = 1
+
+[node name="CpuVBoxContainer" type="VBoxContainer" parent="HBoxContainer"]
+custom_minimum_size = Vector2(80, 80)
+layout_mode = 2
+size_flags_horizontal = 2
+
+[node name="CpuDie" type="Sprite2D" parent="HBoxContainer/CpuVBoxContainer"]
+offset = Vector2(40, 40)
+
+[node name="CpuLabel" type="Label" parent="HBoxContainer/CpuVBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 10
+text = "The bot"
+horizontal_alignment = 1
+
+[node name="Resultbackup" type="Label" parent="."]
+visible = false
+custom_minimum_size = Vector2(0, 50)
+layout_mode = 2
+text = "Press Roll"
+horizontal_alignment = 1
+
+[node name="ResultLabel" type="RichTextLabel" parent="."]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+bbcode_enabled = true
+text = "Press Roll"
+scroll_active = false
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RollButton" type="Button" parent="."]
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+text = "Roll the dice"

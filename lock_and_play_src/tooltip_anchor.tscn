@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bo7lavau6hkbh"]
+
+[node name="TooltipAnchor" type="Label"]
+mouse_filter = 1
+theme_type_variation = &"HeaderSmall"
+text = "🛈"

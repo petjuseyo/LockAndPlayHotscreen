@@ -1,0 +1,8 @@
+[gd_scene format=3 uid="uid://debvsre4lph2a"]
+
+[node name="TooltipAnchorRich" type="RichTextLabel"]
+bbcode_enabled = true
+text = "[color=crimson][font_size=20]🛈[/font_size][/color]"
+fit_content = true
+scroll_active = false
+autowrap_mode = 0

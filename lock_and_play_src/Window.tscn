@@ -1,0 +1,174 @@
+[gd_scene load_steps=3 format=3 uid="uid://br1iuuqbdl10p"]
+
+[sub_resource type="GDScript" id="GDScript_dnc0h"]
+script/source = "extends Node2D
+
+var Utils = preload(\"Utils.gd\")
+var Data = preload(\"Data.gd\")
+
+
+var _window_mode
+var _scene_path: String
+var _content: Node
+var _game_data: Dictionary
+
+@onready var window := $Window
+@onready var content_container := $Window/ScrollContainer/PanelContainer/ContentContainer
+@onready var validation_bar := $Window/ValidationBar
+@onready var cancel_button := $Window/ValidationBar/HBoxContainer/CancelButton
+@onready var save_button := $Window/ValidationBar/HBoxContainer/SaveButton
+
+#signal confirmed(data: Dictionary)
+#signal cancelled()
+
+signal game_event_relay(action: Dictionary)
+
+
+func init(game_data: Dictionary, mode):
+	if mode == Data.WINDOW_MODE_GAME:
+		Utils.logdebug(\"WINDOW_MODE_GAME\")
+		_game_data = game_data
+		_scene_path = Utils.resolve_scene_path(_game_data.game_scene)
+		_window_mode = Data.WINDOW_MODE_GAME
+	else:
+		Utils.logdebug(\"MODE_CONFIG\")
+		_game_data = game_data
+		_scene_path = Utils.resolve_scene_path(_game_data.config_scene)
+		_window_mode = Data.WINDOW_MODE_CONFIG
+
+func _ready() -> void:
+	var collection_packed_scene := load(_scene_path)
+	if collection_packed_scene != null:
+		_content = collection_packed_scene.instantiate()
+		content_container.add_child(_content)
+	else:
+		Utils.logerror(\"couldn't load scene '%s'\" % _scene_path)
+	
+	if _window_mode == Data.WINDOW_MODE_GAME:
+		#validation_bar.visible = false
+		save_button.visible = false
+		cancel_button.text = \"Close\"
+		show_window(\"%s %s\" % [_game_data.icon, _game_data.name])
+	else:
+		show_window(\"%s %s Settings\" % [_game_data.icon, _game_data.name])
+
+
+func show_window(title: String=\"\"):
+	set_title(title)
+	
+	var window_size: Array = []
+	if _window_mode == Data.WINDOW_MODE_GAME:
+		_content.game_event.connect(on_game_event)
+		window_size = _game_data.game_data.get(\"window_size\")
+	elif _window_mode == Data.WINDOW_MODE_CONFIG:
+		window_size = _game_data.config_data.get(\"window_size\")
+	
+	# set window size defined in config.
+	if window_size != null and window_size.size() > 0:
+		window.size = Vector2i(window_size[0], window_size[1])
+	
+	# recenter in case size changed
+	window.move_to_center()
+	
+	window.popup()
+
+func set_title(title: String=\"\"):
+	if not title.is_empty():
+		window.title = title
+
+func on_game_event(action: Dictionary) -> void:
+	game_event_relay.emit(action)
+
+# 'save' button is pressed
+func _on_save_button_pressed() -> void:
+	_content.commit_changes()
+	close_window()
+
+# 'cancel' button is pressed
+func _on_cancel_button_pressed() -> void:
+	close_window()
+
+# X close button is pressed
+func _on_window_close_requested() -> void:
+	close_window()
+
+func close_window() -> void:
+	#popup.hide()
+	queue_free()
+"
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_463tg"]
+bg_color = Color(0, 0, 0, 0.490196)
+
+[node name="ModWindow" type="Node2D"]
+script = SubResource("GDScript_dnc0h")
+
+[node name="Window" type="Window" parent="."]
+auto_translate_mode = 1
+initial_position = 4
+size = Vector2i(600, 500)
+transient = true
+transient_to_focused = true
+exclusive = true
+
+[node name="ScrollContainer" type="ScrollContainer" parent="Window"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_bottom = -43.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="PanelContainer" type="PanelContainer" parent="Window/ScrollContainer"]
+clip_contents = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="ContentContainer" type="MarginContainer" parent="Window/ScrollContainer/PanelContainer"]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 10
+
+[node name="ValidationBarBg" type="PanelContainer" parent="Window"]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -43.0
+grow_horizontal = 2
+grow_vertical = 0
+size_flags_horizontal = 8
+size_flags_vertical = 4
+
+[node name="ValidationBar" type="PanelContainer" parent="Window"]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -43.0
+grow_horizontal = 2
+grow_vertical = 0
+size_flags_horizontal = 8
+size_flags_vertical = 4
+theme_override_styles/panel = SubResource("StyleBoxFlat_463tg")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Window/ValidationBar"]
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+theme_override_constants/separation = 6
+
+[node name="CancelButton" type="Button" parent="Window/ValidationBar/HBoxContainer"]
+layout_mode = 2
+text = "Cancel"
+
+[node name="SaveButton" type="Button" parent="Window/ValidationBar/HBoxContainer"]
+layout_mode = 2
+text = "Save changes"
+
+[connection signal="close_requested" from="Window" to="." method="_on_window_close_requested"]
+[connection signal="pressed" from="Window/ValidationBar/HBoxContainer/CancelButton" to="." method="_on_cancel_button_pressed"]
+[connection signal="pressed" from="Window/ValidationBar/HBoxContainer/SaveButton" to="." method="_on_save_button_pressed"]

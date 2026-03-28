@@ -1,0 +1,1187 @@
+[gd_scene load_steps=2 format=3 uid="uid://b7a645615vhqq"]
+
+[sub_resource type="GDScript" id="GDScript_25wtq"]
+script/source = "class_name LockAndPlayHS
+extends Node
+
+const _mod_src_path := \"lock_and_play_src/\"
+var Utils = preload(_mod_src_path + \"Utils.gd\")
+var Data = preload(_mod_src_path + \"Data.gd\")
+
+
+var session: LockedSession = LockedSession.new(HS.profile_id)
+
+var _modified_locked_menu = null
+
+# hboxcontainer containing the game button launcher and game infos displayed on
+# the locked screen
+# can be accessed by game name, ie {\"dice\": hboxref,}
+# useful nodes inside are TooltipAnchorRich and GameLauncherButton
+var _game_launcher_containers = {}
+
+#var is_locked: bool:
+	#get:
+		##return HS.menu.has_node(\"LockedMenu\")
+		#return HS.config_reader.phs_lock_data.is_locked == \"true\"
+#var is_resumed_session: bool:
+	#get:
+		#if HS.menu.has_node(\"LockedMenu\"):
+			#return HS.menu.get_node(\"LockedMenu\").is_hotscreen_restarting
+		#return false
+
+
+func _notification(what):
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		Utils.logdebug(\"NOTIFICATION_WM_CLOSE_REQUEST received\")
+		if session and session.is_running and not session.is_finished:
+			session.pause()
+			write_hotscreen_save()
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		#Utils.logdebug(\"NOTIFICATION_APPLICATION_FOCUS_OUT received\")
+		if session and session.is_running and not session.is_finished:
+			session.save()
+			write_hotscreen_save()
+
+# this function is called before adding the mod to the tree to set the last saved parameters
+func load_save_dict(parameters: Dictionary):
+	Utils.logdebug(\"LOAD_SAVE_DICT profile=%s\" % [HS.profile_id])
+	
+	# dice
+	Data.games.dice.enabled = parameters.get(\"dice.enabled\", Data.games.dice.enabled)
+	Data.games.dice.config_data.time_mult = parameters.get(\"dice.config_data.time_mult\", Data.games.dice.config_data.time_mult)
+	Data.games.dice.config_data.wait_time = parameters.get(\"dice.config_data.wait_time\", Data.games.dice.config_data.wait_time)
+	Data.games.dice.config_data.runs_count_required = parameters.get(\"dice.config_data.runs_count_required\", Data.games.dice.config_data.runs_count_required)
+	Data.games.dice.config_data.regularity = parameters.get(\"dice.config_data.regularity\", Data.games.dice.config_data.regularity)
+	Data.games.dice.config_data.punishment = parameters.get(\"dice.config_data.punishment\", Data.games.dice.config_data.punishment)
+	Data.games.dice.game_data.runs_timestamps = parameters.get(\"dice.game_data.runs_timestamps\", Data.games.dice.game_data.runs_timestamps.duplicate())
+	
+	# wof
+	#Data.games.wof.enabled = parameters.get(\"wof.enabled\", Data.games.wof.enabled)
+	
+	#other
+	Data.lock_data.countdown_visible = parameters.get(\"lock_data.countdown_visible\", Data.lock_data.countdown_visible)
+
+
+# this function is called when saving the game to store the dictionnary of parameters
+# also called when entering locked mode (and every 5 minutes)
+func write_save_dict() -> Dictionary:
+	Utils.logdebug(\"WRITE_SAVE_DICT profile=%s\" % [HS.profile_id])
+	
+	var dict := {
+		# dice
+		\"dice.enabled\": Data.games.dice.enabled,
+		\"dice.config_data.time_mult\": Data.games.dice.config_data.time_mult,
+		\"dice.config_data.wait_time\": Data.games.dice.config_data.wait_time,
+		\"dice.config_data.runs_count_required\": Data.games.dice.config_data.runs_count_required,
+		\"dice.config_data.regularity\": Data.games.dice.config_data.regularity,
+		\"dice.config_data.punishment\": Data.games.dice.config_data.punishment,
+		\"dice.game_data.runs_timestamps\": Data.games.dice.game_data.runs_timestamps,
+		
+		# wof
+		#\"wof.enabled\": Data.games.wof.enabled,
+		
+		# other
+		\"lock_data.countdown_visible\": Data.lock_data.countdown_visible,
+	}
+	
+	return dict
+	
+
+func write_hotscreen_save():
+	#HS.config_reader.save_params_of_mods()
+	HS.config_reader.write_hotscreen_save()
+
+func launch_session():
+	if session.restore():
+		# resume ongoing session
+		Utils.loginfo(\"resuming locked session...\")
+		session.cycle_callback = end_cycle_callback
+		HS.menu.get_node(\"LockedMenu\").remaining_seconds = session.get_time_left()
+		if not Data.lock_data.countdown_visible:
+			change_lock_countdown_visibility(false)
+		Utils.logdebug(\"session.get_elapsed(): %s\" % str(session.get_elapsed()))
+		write_hotscreen_save()
+		#TODO check for behavior == 2 and try stay lock if punishments added time offline. 
+	else:
+		# start a new session
+		Utils.loginfo(\"starting new locked session...\")
+		session = LockedSession.new(HS.profile_id)
+		var hs_lock_data = HS.config_reader.phs_lock_data
+		## HS's lock_duration is in minutes
+		var duration = float(hs_lock_data.lock_duration) * 60.0
+		session.start(duration, int(hs_lock_data.behavior))
+		session.cycle_callback = end_cycle_callback
+		
+		# start a cycle or not
+		if is_penalties_active(Data.games.dice.id):
+			session.add_cycle(
+				CycleRunner.new(\"dice\", Data.games.dice.config_data.regularity)
+			)
+		
+		# resets countdown visibility here, just in case
+		Data.lock_data.countdown_visible = true
+	Utils.logdebug(HS.config_reader.phs_lock_data)
+
+
+func _exit_tree() -> void:
+	Utils.logging.close()
+	
+
+func _ready() -> void:
+	
+	Utils.init(self)
+	
+	Utils.logdebug(\"relative/absolute mod path:\")
+	Utils.logdebug(Utils.relative_mod_path)
+	Utils.logdebug(Utils.absolute_mod_path)
+	Utils.logdebug(\"profile_id: \" + str(HS.profile_id))
+	
+	add_mod_ui()
+	
+	
+	if OS.has_feature('editor') or HS.menu.has_node(\"LockedMenu\"):
+		launch_session()
+	
+	if not OS.has_feature('editor'):
+		##TODO if this 2 don't return the same value, log error?
+		#print(\"HS.config_reader: \" + HS.config_reader.find_folder_path(\"LockAndPlayHS\"))
+		#print(\"LockAndPlayHS: \" + Utils.find_folder_path(\"LockAndPlayHS\")) # LockAndPlayHS: ./CUSTOM_DATA/modsdev/LockAndPlayHS
+		#print(HS.menu.get_version_text()) # => Windows - Full version - v0.8
+		Utils.logdebug(HS.config_reader.phs_lock_data)
+	
+	
+	Data.game_started.connect(print_action_event)
+	Data.game_ended.connect(print_action_event)
+
+
+func print_action_event(arg: Dictionary):
+	#TODO Lock History 
+	#print(arg)
+	pass
+
+
+func add_mod_ui():
+	var ui_mod_node = $VBoxContainer
+	$VBoxContainer/ModVersion.text = \"[font_size=12]%s v%s[/font_size]\" % [Data.app_info.name, Data.app_info.version]
+	if not OS.has_feature(\"editor\"):
+		remove_child(ui_mod_node)
+		get_meta(\"ui_node\").add_child(ui_mod_node)
+		
+		
+	for item in Data.games:
+		var card = load(Utils.resolve_scene_path(\"card_panel.tscn\")).instantiate()
+		card.init(Data.games[item].id)
+		card.configure_pressed.connect(open_config_window)
+		ui_mod_node.get_node(\"ModsHFlowContainer\").add_child(card)
+
+
+##
+## Open a game window for the game with the given id 
+##
+func open_game_window(minigame_data: Dictionary):
+	var window = load(Utils.resolve_scene_path(\"Window.tscn\")).instantiate()
+	window.init(minigame_data, Data.WINDOW_MODE_GAME)
+	window.game_event_relay.connect(on_game_event_received)
+	add_child(window)
+	return window
+
+
+##
+## Open a config window for the game with the given id 
+##
+func open_config_window(minigame_id: String):
+	var window = load(Utils.resolve_scene_path(\"Window.tscn\")).instantiate()
+	var game_path = Utils.resolve_scene_path(Data.games[minigame_id].config_scene)
+	window.init(Data.games[minigame_id], Data.WINDOW_MODE_CONFIG)
+	add_child(window)
+
+
+##
+## When something happens in game (add/remove time after losing, etc...)
+##
+func on_game_event_received(action: Dictionary) -> void:
+	if OS.has_feature('editor'):
+		return
+		
+	Utils.logdebug(\"on_game_event_received: %s\" % [action])
+	
+	apply_action(action)
+	
+	write_hotscreen_save()
+	session.save()
+
+
+##
+## Apply action
+##
+func apply_action(action: Dictionary):
+	match action.type:
+		Data.Action.ADD_TIME, Data.Action.REMOVE_TIME:
+			change_lock_time(action)
+		Data.Action.ENABLE_COLLECTION, Data.Action.DISABLE_COLLECTION,\\
+		Data.Action.TOGGLE_COLLECTION, Data.Action.TOGGLE_COLLECTION_RANDOM:
+			enable_disable_collection(action)
+		Data.Action.LEVEL_UP, Data.Action.LEVEL_DOWN:
+			change_collection_level(action)
+		Data.Action.SHOW_LOCK_TIME:
+			change_lock_countdown_visibility(true, action)
+		Data.Action.HIDE_LOCK_TIME:
+			change_lock_countdown_visibility(false, action)
+		Data.Action.TOGGLE_LOCK_TIME_VISIBILITY:
+			toggle_lock_countdown_visibility(action)
+		Data.Action.OS_COMMAND:
+			exec_os_command(action)
+		Data.Action.OS_COMMAND_NEW_PROCESS:
+			exec_os_command_new_process(action)
+
+
+##
+## called when a cycle ends
+##
+func end_cycle_callback(cycle: CycleRunner):
+	Utils.logdebug(\"end_cycle_callback() \" + str(cycle.to_dict()))
+	
+	if has_actions_remaining(cycle.id):
+		Utils.loginfo(\"applying punishments %s\" % [Data.games[cycle.id].config_data.punishment])
+		apply_punishments(Data.games[cycle.id].config_data.punishment)
+	else:
+		Utils.logdebug(\"no punishment applied\")
+
+
+##
+## Apply punishments
+##
+## punishments { \"type\": Data.Action.*, \"arg\": Variant, \"arg_type\": Data.Action.ARG_TYPE_*, \"origin\": Data.Action.ORIGIN_* }
+func apply_punishments(punishments: Array):
+	assert(punishments.size() > 0)
+	
+	for action in punishments:
+		apply_action(action)
+	
+	write_hotscreen_save()
+	session.save()
+
+
+################################################################################
+## LOCKED MENU
+################################################################################
+
+
+##
+## Checks if in locked state and fire the appropriate events when needed
+##
+func _on_timer_check_periodic_timeout() -> void:
+	if OS.has_feature('editor'):
+		return
+		
+	if not HS.menu.has_node(\"LockedMenu\"):
+		if _modified_locked_menu != null:
+			_modified_locked_menu = null
+		return
+	
+	var locked_menu = HS.menu.get_node(\"LockedMenu\")
+	if _modified_locked_menu == locked_menu:
+		locked_loop()
+		return
+	_modified_locked_menu = locked_menu
+	
+	# will signal when exiting locked mode
+	_modified_locked_menu.tree_exiting.connect(exiting_locked_state)
+	
+	entered_locked_state()
+
+
+##
+## Event entered locked state
+##
+func entered_locked_state() -> void:
+	Utils.logdebug(\"entered locked state\")
+	Utils.logdebug(HS.config_reader.phs_lock_data)
+	
+	if not session.is_running:
+		launch_session()
+	
+	add_ui_to_lock()
+
+
+##
+## Adds games button to the Lock Menu
+##
+func add_ui_to_lock():
+	var target_container = _modified_locked_menu.find_child(\"VBoxContainer\")
+	# place game buttons and infos to lock screen if the mini game is enabled
+	for id in Data.games:
+		if Data.games[id].enabled:
+			var label := Label.new()
+			label.text = Data.games[id].desc
+			
+			var tooltip = load(Utils.resolve_scene_path(\"tooltip_anchor_rich.tscn\")).instantiate()
+			tooltip.text = \"[color=coral][font_size=20]🛈[/font_size][/color]\"
+			tooltip.visible = false
+			tooltip.name = \"TooltipAnchorRich\"
+			
+			var button := Button.new()
+			var game_icon = Data.games[id].icon
+			var game_name = Data.games[id].name
+			button.text = \"Open %s %s\" % [game_icon, game_name]
+			button.pressed.connect(open_game_window.bind(Data.games[id]))
+			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			button.name = \"GameLauncherButton\"
+			
+			var hbox = HBoxContainer.new()
+			# keep a ref for later
+			_game_launcher_containers[id] = hbox
+			
+			hbox.add_child(button)
+			hbox.add_child(tooltip)
+			
+			target_container.add_child(label)
+			target_container.add_child(hbox)
+	
+	##debug button
+	#var lock_debug_button := Button.new()
+	#lock_debug_button.text = \"debug\"
+	#lock_debug_button.pressed.connect(_on_debug_button_pressed)
+	#target_container.add_child(lock_debug_button)
+	
+	add_scroll_to_locked_menu()
+
+
+func add_scroll_to_locked_menu():
+	var scroll_container = ScrollContainer.new()
+	scroll_container.name = \"ScrollContainer\"
+	_modified_locked_menu.add_child(scroll_container)
+	var center_container:CenterContainer = _modified_locked_menu.find_child(\"CenterContainer\")
+	center_container.reparent(scroll_container)
+	center_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	center_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+##
+## Event exiting locked state
+## This won't be called if the process is killed or when the computer is restarted
+##
+func exiting_locked_state() -> void:
+	Utils.logdebug(\"exiting locked state\")
+	
+	if session and session.is_running:
+		session.stop()
+		
+		HS.config_reader.phs_lock_data.lock_duration = str(max(0, session.origin_duration / 60.0))
+		# The current ending session may have changed the duration of the lock by modifying
+		# HS.config_reader.phs_lock_data.lock_duration. There's a bug in HS where the old time is
+		# still displayed in the input line edit to the user but underneath the duration is not the same.
+		# Updating Locking Time LineEdit to HS.config_reader.phs_lock_data.lock_duration to fix the issue
+		var LineEditLockingTime := \"/root/Overlay/AddWindowMenu/MenuWindow/Menu/PanelContainer/MarginContainer/TabContainer/\"\\
+			+ \"Tools/MarginContainer/ScrollContainer/VBoxContainer/HBoxContainer12/LineEditLockingTime\"
+		get_node(LineEditLockingTime).text = HS.config_reader.phs_lock_data.lock_duration
+	
+	if _modified_locked_menu != null and not _modified_locked_menu.is_hotscreen_restarting:
+		
+		# Reset the runs timestamps list
+		Data.games.dice.game_data.runs_timestamps = []
+	
+	# remove refs to nodes
+	_game_launcher_containers.clear()
+
+
+##
+## Called every seconds while lock is active
+##
+func locked_loop() -> void:
+	var now := Time.get_unix_time_from_system()
+	
+	session.update()
+	#TODO
+	#for id in Data.games:
+		#if Data.games[id].enabled:
+			#update_actions_remaining_tooltip(id)
+	update_actions_remaining_tooltip(\"dice\")
+	
+
+
+##
+## Update visiblity and text for specified game id tooltip (placed next to the open game button)
+##
+func update_actions_remaining_tooltip(id: String):
+	var tooltip = _game_launcher_containers[id].get_node(\"TooltipAnchorRich\")
+	if not tooltip:
+		Utils.logerror(\"error finding actions remaining tooltip '%s'\" % id)
+		
+	var now := Time.get_unix_time_from_system()
+	if is_penalties_active(id) and has_actions_remaining(id):
+		var ttt := \"Tasks pending: %s / %s actions completed · %s remaining to avoid penalties\" % [
+			Data.games[id].config_data.runs_count_required - count_actions_required(id),
+			Data.games[id].config_data.runs_count_required,
+			# create session.get_cycle(id).get_time_left()
+			Utils.format_time_from_seconds(session.get_cycle(id).get_time_left(), true)
+		]
+		tooltip.tooltip_text = ttt
+		tooltip.visible = true
+	else:
+		tooltip.tooltip_text = \"\"
+		tooltip.visible = false
+
+
+##
+## Check if penalties are active for that game id 
+##
+func is_penalties_active(id: String) -> bool:
+	# dice rolls required set to 0, we skip
+	if Data.games[id].config_data.runs_count_required == 0:
+		return false
+	# regularity not set, we skip
+	if int(Data.games[id].config_data.regularity) == 0:
+		return false
+	# also if no punishment is set, we skip 
+	if Data.games[id].config_data.punishment.size() == 0:
+		return false
+	
+	return true
+
+
+##
+## Check if the game with that game id still has some actions remainings for the user to do
+##
+func has_actions_remaining(id: String) -> bool:
+	return count_actions_required(id) > 0
+
+##
+## Count actions remaining for the user to do before penalties are applied
+## 0 = no more actions left, no punishment will be applied
+## >0 = actions remaining, punishment will be applied if not done before end of cycle
+##
+func count_actions_required(id: String) -> int:
+	var count = Data.games[id].config_data.runs_count_required
+	var size = Data.games[id].game_data.runs_timestamps.size()
+	for i in range(Data.games[id].config_data.runs_count_required):
+		if i < size:
+			if Data.games[id].game_data.runs_timestamps[i] > session.get_cycle(id).start_time:
+				count -= 1
+	
+	return count
+
+
+
+################################################################################
+## LOCK MENU ACTIONS
+################################################################################
+
+
+##
+## Add or remove time to the lock. 
+## Example of expected action argument: {
+## 	\"origin\": Data.Action.ORIGIN_DICE_GAME,
+## 	\"arg\": time in seconds,
+## 	\"type\": Data.Action.REMOVE_TIME,
+## }
+func change_lock_time(action: Dictionary) -> void:
+	Utils.logdebug(\"changing time with this action: \" + str(action))
+	
+	if not HS.menu.has_node(\"LockedMenu\"):
+		Utils.logerror(\"can't change time when unlocked\")
+		return
+		
+	if not session.duration > 0.0 or HS.config_reader.phs_lock_data.lock_duration == \"0.0\":
+		Utils.logdebug(\"can't change time when locked forever (unlock time set to 'never')\")
+		return
+	
+	var amount = 0
+	if action.type == Data.Action.REMOVE_TIME:
+		amount = int(-action.arg)
+		Utils.loginfo(\"removing '%s' sec to the lock\" % [str(amount)])
+	else:
+		amount = int(action.arg)
+		Utils.loginfo(\"adding '%s' sec to the lock\" % [str(amount)])
+	
+	_modified_locked_menu.remaining_seconds += amount
+	session.duration += amount
+	HS.config_reader.phs_lock_data.lock_duration = str(max(0, session.duration / 60.0))
+	#HS.config_reader.phs_lock_data.sec_elapsed = \"0.0\"
+	Data.lock_time_changed.emit(action)
+	#HS.menu.set_label_countdown()
+	Utils.loginfo(\"session -- elapsed time=%ss / time left=%ss / duration=%ss\" % [
+		str(int(session.get_elapsed())),
+		str(int(session.get_time_left())),
+		str(int(session.duration))
+	])
+	Utils.logdebug(\"HS.config_reader.phs_lock_data.lock_duration = %s min\" % [HS.config_reader.phs_lock_data.lock_duration])
+	Utils.logdebug(\"_modified_locked_menu.remaining_seconds = %s sec\" % [str(_modified_locked_menu.remaining_seconds)])
+
+
+##
+## Return an array of HS collections with the names provided.
+##
+func get_collections_from_names(collec_names: Array[String]) -> Array:
+	var found_collections = []
+	var sub_collections = HS.overlay.main_collection.get(\"collections\")
+	if sub_collections != null and len(sub_collections) > 0:
+		for sub_collection in sub_collections:
+			if sub_collection.get(\"phs_collection_name\") in collec_names:
+				found_collections.append(sub_collection)
+	return found_collections
+
+##
+## Enable or disable a collection. 
+## Example of expected action argument: {
+## 	\"origin\": Data.Action.ORIGIN_DICE_PENALTIES,
+## 	\"arg\": collection_name,
+## 	\"type\": Data.Action.DISABLE_COLLECTION,
+## }
+func enable_disable_collection(action: Dictionary):
+	Utils.logdebug(\"enable/disable collection with this action: \" + str(action))
+	
+	if str(action.arg).strip_edges().is_empty():
+		Utils.logerror(\"start/stop collection: no collection name provided\")
+		return
+		
+	var collec_names := str(action.arg).split(\";\", false)
+	var found_collections = get_collections_from_names(collec_names)
+	
+	if found_collections.size() == 0:
+		Utils.logerror(\"start/stop collection: no collection found with the names '%s'\" % [str(action.arg)])
+		return
+	
+	# shuffle the collection. usefull for action type TOGGLE_COLLECTION_RANDOM
+	# the first element will be the one toggled then the code will return
+	found_collections.shuffle()
+	
+	for collection in found_collections:
+		# action.arg contains a list of collection names separated by ';' 
+		# that potentially weren't found. We need to replace the original string
+		# with the name of the collection that was actually found in order to be
+		# used later in logs or events.
+		var action_copy = action.duplicate()
+		action_copy.arg = collection.phs_collection_name
+		if action.type == Data.Action.ENABLE_COLLECTION:
+			change_collection_state(collection, action_copy, true)
+		elif action.type == Data.Action.DISABLE_COLLECTION:
+			change_collection_state(collection, action_copy, false)
+		elif action.type == Data.Action.TOGGLE_COLLECTION:
+			change_collection_state(collection, action_copy, collection.phs_is_stopped)
+		elif action.type == Data.Action.TOGGLE_COLLECTION_RANDOM:
+			# pick a random element then returns so we escape the loop
+			change_collection_state(collection, action_copy, collection.phs_is_stopped)
+			return
+
+
+func change_collection_state(collection, action: Dictionary, enable_collection: bool):
+	if enable_collection:
+		if collection.phs_is_stopped:
+			collection.phs_is_stopped = false
+			collection.restart_collection()
+			Data.collection_enabled.emit(action)
+			Utils.loginfo(\"enabled collection '%s'\" % [collection.phs_collection_name])
+	else:
+		if not collection.phs_is_stopped:
+			collection.phs_is_stopped = true
+			collection.stop_collection()
+			Data.collection_disabled.emit(action)
+			Utils.loginfo(\"disabled collection '%s'\" % [collection.phs_collection_name])
+			
+##
+## Level up or down a collection. 
+## Example of expected action argument: {
+## 	\"origin\": Data.Action.ORIGIN_DICE_PENALTIES,
+## 	\"arg\": collection name,
+## 	\"type\": Data.Action.LEVEL_UP,
+## }
+func change_collection_level(action: Dictionary) -> void:
+	Utils.logdebug(\"changing level with this action: \" + str(action))
+	
+	var pick_first_found = false
+	if str(action.arg).strip_edges().is_empty():
+		pick_first_found = true
+		
+	var levels_names := str(action.arg).split(\";\", false)
+	var found_levels := []
+	var sub_collections = HS.overlay.main_collection.get(\"collections\")
+	if sub_collections != null and len(sub_collections) > 0:
+		for sub_collection in sub_collections:
+			var level = sub_collection.get(\"phs_level\")
+			if level == null:
+				continue
+			if sub_collection.phs_is_stopped:
+				continue
+				
+			if pick_first_found:
+				found_levels.append(sub_collection)
+				break
+				
+			if sub_collection.get(\"phs_collection_name\") in levels_names:
+				found_levels.append(sub_collection)
+				
+	for level in found_levels:
+		if action.type == Data.Action.LEVEL_UP:
+			Utils.loginfo(\"leveling up '%s'\" % [level.phs_collection_name])
+			level.level_up()
+			action.arg = level.phs_collection_name
+			Data.collection_level_up.emit(action)
+		else:
+			Utils.loginfo(\"leveling down '%s'\" % [level.phs_collection_name])
+			level.level_down()
+			action.arg = level.phs_collection_name
+			Data.collection_level_down.emit(action)
+
+
+##
+## Hide or show the lock countdown 
+##
+## Example of expected action argument: {
+## 	\"origin\": Data.Action.ORIGIN_DICE_PENALTIES,
+## 	\"type\": Data.Action.HIDE_LOCK_TIME,
+## }
+func change_lock_countdown_visibility(visible: bool, action: Dictionary = {}):
+	var countdown: Label = try_get_lock_countdown()
+	if countdown:
+		countdown.visible = visible
+		Data.lock_data.countdown_visible = countdown.visible
+		if action and not action.is_empty():
+			if visible:
+				Data.countdown_revealed.emit(action)
+			else:
+				Data.countdown_hidden.emit(action)
+			Utils.loginfo(\"changed countdown visibility: visible=%s\" % [visible])
+
+
+func toggle_lock_countdown_visibility(action: Dictionary = {}):
+	var countdown: Label = try_get_lock_countdown()
+	if countdown:
+		countdown.visible = !countdown.visible
+		Data.lock_data.countdown_visible = countdown.visible
+		if action and not action.is_empty():
+			if countdown.visible:
+				Data.countdown_revealed.emit(action)
+			else:
+				Data.countdown_hidden.emit(action)
+			Utils.loginfo(\"changed countdown visibility: visible=%s\" % [countdown.visible])
+
+
+func try_get_lock_countdown() -> Node:
+	if not HS.menu.has_node(\"LockedMenu\"):
+		return null
+	
+	var locked_menu = HS.menu.get_node(\"LockedMenu\")
+	# The unchanged tree as of HS v0.8 is as follow:
+	#LockedMenu:<PanelContainer>
+	#┠╴CenterContainer
+	#┃  ┖╴VBoxContainer
+	#┃     ┠╴TextureRect
+	#┃     ┠╴HBoxContainer2
+	#┃     ┃  ┠╴Label
+	#┃     ┃  ┖╴LabelCountdown
+	#┃     ┖╴HBoxContainer
+	#┃        ┠╴Label
+	#┃        ┖╴LineEdit
+	#┖╴TimerSec
+	
+	# this mod adds a ScrollContainer
+	var countdown: LineEdit = null
+	if locked_menu.has_node(\"ScrollContainer/CenterContainer/VBoxContainer/HBoxContainer2/LabelCountdown\"):
+		countdown = locked_menu.get_node(\"ScrollContainer/CenterContainer/VBoxContainer/HBoxContainer2/LabelCountdown\")
+	if countdown == null:
+		# try the default tree as fallback
+		if locked_menu.has_node(\"CenterContainer/VBoxContainer/HBoxContainer2/LabelCountdown\"):
+			countdown = locked_menu.get_node(\"CenterContainer/VBoxContainer/HBoxContainer2/LabelCountdown\")
+	return countdown
+
+
+##
+## Change visibility of the lock password line edit
+##
+func change_lock_password_visibility(visible: bool):
+	var line_edit: LineEdit = try_get_lock_password_line_edit()
+	if line_edit:
+		line_edit.visible = visible
+
+
+func toggle_lock_password_visibility():
+	var line_edit: LineEdit = try_get_lock_password_line_edit()
+	if line_edit:
+		line_edit.visible = !line_edit.visible
+
+
+func try_get_lock_password_line_edit() -> Node:
+	if not HS.menu.has_node(\"LockedMenu\"):
+		return null
+	
+	var locked_menu = HS.menu.get_node(\"LockedMenu\")
+	
+	# The unchanged tree as of HS v0.8 is as follow:
+	#LockedMenu:<PanelContainer>
+	#┠╴CenterContainer
+	#┃  ┖╴VBoxContainer
+	#┃     ┠╴TextureRect
+	#┃     ┠╴HBoxContainer2
+	#┃     ┃  ┠╴Label
+	#┃     ┃  ┖╴LabelCountdown
+	#┃     ┖╴HBoxContainer
+	#┃        ┠╴Label
+	#┃        ┖╴LineEdit
+	#┖╴TimerSec
+	
+	# this mod adds a ScrollContainer
+	var countdown: LineEdit = null
+	if locked_menu.has_node(\"ScrollContainer/CenterContainer/VBoxContainer/HBoxContainer/LineEdit\"):
+		countdown = locked_menu.get_node(\"ScrollContainer/CenterContainer/VBoxContainer/HBoxContainer/LineEdit\")
+	if countdown == null:
+		# try the default tree as fallback
+		if locked_menu.has_node(\"CenterContainer/VBoxContainer/HBoxContainer/LineEdit\"):
+			countdown = locked_menu.get_node(\"CenterContainer/VBoxContainer/HBoxContainer/LineEdit\")
+	return countdown
+
+
+##
+## Freezes the current lock, pausing the countdown timer.
+##
+## Use this to temporarily halt the progress of the lock.
+## While frozen, the lock duration will not tick down.
+## The lock will remain frozen until explicitly unfrozen.
+## The countdown can still be changed by adding/removing time manually.
+func freeze_lock(action: Dictionary):
+	var timer_sec:Timer = _modified_locked_menu.find_child(\"TimerSec\")
+	timer_sec.stop()
+	# TODO handle session pause
+	# make a session.freeze() ? => would not jump in time when resumed
+	# cycle should stay the same
+
+
+##
+## Execute OS commmand in the same process
+##
+## Example of expected action argument: {
+## 	\"origin\": Data.Action.ORIGIN_DICE_PENALTIES,
+## 	\"arg\": \"command\",
+## 	\"arg_type\": Data.Action.ARG_TYPE_STRING,
+## 	\"type\": Data.Action.OS_COMMAND,
+## }
+func exec_os_command(action: Dictionary):
+	if action.arg.is_empty():
+		return
+		
+	Utils.loginfo(\"executing user defined OS command: '%s'\" % [action.arg])
+	var pid := OS.create_process(\"cmd.exe\", [\"/C\", action.arg])
+	
+	if pid == -1:
+		Utils.logerror(\"couldn't create process with command '%s'\" % [action.arg])
+		
+	
+	var output: = []
+	var exit_code: = 0
+	exit_code = OS.execute(\"cmd.exe\", [\"/C\", action.arg], output, true)
+	#var exit_code = OS.execute_with_pipe(\"cmd.exe\", [\"/C\", action.arg], false)
+	if exit_code == -1:
+		Utils.logerror(\"could't execute command '%s'.\\nexit code: %s\\nouput: %s\" % [action.arg, str(exit_code), str(output)])
+	else:
+		Utils.loginfo(\"command executed.\\nexit code: %s\\nouput: %s\" % [str(exit_code), str(output)])
+
+
+##
+## Execute OS commmand in a new process
+##
+## Example of expected action argument: {
+## 	\"origin\": Data.Action.ORIGIN_DICE_PENALTIES,
+## 	\"arg\": \"command\",
+## 	\"arg_type\": Data.Action.ARG_TYPE_STRING,
+## 	\"type\": Data.Action.OS_COMMAND_NEW_PROCESS,
+## }
+func exec_os_command_new_process(action: Dictionary):
+	if action.arg.is_empty():
+		return
+		
+	Utils.loginfo(\"executing user defined OS command: '%s'\" % [action.arg])
+	var pid := OS.create_process(\"cmd.exe\", [\"/C\", action.arg])
+	
+	if pid == -1:
+		Utils.logerror(\"couldn't create process with command '%s'\" % [action.arg])
+		
+
+
+##
+## Exit locked state. After calling it the user won't be locked anymore.
+##
+func force_exit_locked_state():
+	if HS.menu.has_node(\"LockedMenu\"):
+		HS.menu.get_node(\"LockedMenu\").remove_locked_password()
+
+
+func _on_debug_button_pressed() -> void:
+	pass
+
+
+################################################################################
+## LOCKED SESSION & CYCLE
+################################################################################
+
+
+##
+## Cycles have a duration and an action \"id\" is called by Session at the end of
+## the duration before starting a whole new cycle.
+##
+class CycleRunner extends RefCounted:
+
+	## id should be the same as a game id
+	var id: String
+	## how long this cycle last until it repeats
+	var duration: float
+	## timestamp of the start of this cycle (default to now)
+	var start_time: float
+
+	func _init(_id: String, _duration: float, _start_time: float = 0.0):
+		duration = _duration
+		id = _id
+		
+		if _start_time > 0:
+			start_time = _start_time
+		else:
+			start_time = Time.get_unix_time_from_system()
+
+	## Update cycle and call callback if cycle ended before starting new cycle.
+	func update(callback: Callable):
+		var now = Time.get_unix_time_from_system()
+		
+		# Catch up in case app was closed for long time
+		while now >= start_time + duration:
+			if callback.is_valid():
+				callback.call(self)
+			
+			start_time += duration
+
+	func get_time_left() -> float:
+		var now = Time.get_unix_time_from_system()
+		return maxf(0.0, (start_time + duration) - now)
+
+	func to_dict() -> Dictionary:
+		return {
+			\"duration\": duration,
+			\"start_time\": start_time,
+			\"id\": id
+		}
+
+	static func from_dict(data: Dictionary) -> CycleRunner:
+		return CycleRunner.new(
+			data.get(\"id\", \"\"),
+			data.get(\"duration\", 0.0),
+			data.get(\"start_time\", 0.0)
+		)
+
+
+##
+## Locked session. Manages cycles and lock time.
+##
+class LockedSession extends RefCounted:
+	
+	const _mod_src_path := \"lock_and_play_src/\"
+	var Utils = preload(_mod_src_path + \"Utils.gd\")
+	var Data = preload(_mod_src_path + \"Data.gd\")
+	
+	# HS.profile_id
+	var profile_id: int = -1
+	
+	const DEFAULT_SAVE_PATH := \"./lockandplay_session_{0}.json\"
+	var save_path: String:
+		get:
+			if profile_id != -1:
+				return DEFAULT_SAVE_PATH.format([profile_id])
+			return DEFAULT_SAVE_PATH.format([\"main\"])
+	
+	const SAVE_INTERVAL := 30.0
+	var _save_timer: float = 0.0
+	var _prev_tick: float = 0.0
+
+	enum Behavior {
+		NO_LOCK, # no lock when HS restarts
+		RESUME_TIMER, # resumes exactly where it left off
+		SUBTRACT_OFF_TIME, # account for the time HS wasn't running (computer shutdown)
+	}
+	
+	var behavior: Behavior = Behavior.RESUME_TIMER
+	var duration: float = 0.0
+	var start_time: float = 0.0 
+	var save_time: float = 0.0
+	var accumulated_time: float = 0.0
+	var origin_start_time: float = 0.0 # never changes
+	var origin_duration: float = 0.0
+	
+	var is_running: bool = false
+	var is_finished: bool = false
+	
+	var cycles: Array[CycleRunner] = []
+	# Global callback
+	var cycle_callback: Callable
+	
+	func _init(_profile_id: int) -> void:
+		profile_id = _profile_id
+	
+	func start(_duration: int = 0, _behavior: Behavior = Behavior.RESUME_TIMER):
+		Utils.loginfo(\"LockedSession: started - duration=%s, behavior=%s\" % [str(_duration), str(_behavior)])
+		is_running = true
+		is_finished = false
+		behavior = _behavior
+		duration = _duration
+		origin_start_time = Time.get_unix_time_from_system()
+		start_time = origin_start_time
+		origin_duration = duration
+		save()
+		# signal that we just entered locked mode
+		Data.lock_started.emit()
+		
+	func pause():
+		Utils.loginfo(\"LockedSession: paused\")
+		save()
+		Data.lock_paused.emit()
+		
+	func resume():
+		Utils.loginfo(\"LockedSession: resumed\")
+		
+		if is_finished:
+			return false
+		
+		var now := Time.get_unix_time_from_system()
+		# If this resume follows a crash, computer shutdown etc
+		var offline_time := maxf(0.0, now - save_time)
+		
+		match behavior:
+			Behavior.NO_LOCK:
+				stop()
+				return false
+			
+			Behavior.RESUME_TIMER:
+				# Timer continues normally
+				for cycle in cycles:
+					cycle.start_time += offline_time
+			
+			Behavior.SUBTRACT_OFF_TIME:
+				# Extend session by offline time
+				accumulated_time += offline_time
+		
+		start_time = now
+		save_time = start_time
+		is_running = true
+		is_finished = false
+		save()
+		Data.lock_resumed.emit()
+		return true
+	
+	func stop():
+		Utils.loginfo(\"LockedSession: stopped\")
+		is_running = false
+		is_finished = true
+		save()
+		Data.lock_ended.emit()
+	
+	func add_cycle(cycle: CycleRunner):
+		cycles.append(cycle)
+		save()
+	
+	func get_cycle(id: String):
+		return cycles.filter(func(cycle):
+			return cycle.id == id
+		).front()
+	
+	func update():
+		if not is_running:
+			return
+		
+		var now = Time.get_unix_time_from_system()
+		
+		for cycle in cycles:
+			cycle.update(cycle_callback)
+		
+		if duration > 0.0 and get_elapsed() >= duration:
+			print(duration)
+			stop()
+			return
+		
+		#print(to_dict())
+		
+		_save_timer += now - _prev_tick
+		if _save_timer >= SAVE_INTERVAL:
+			_save_timer = 0.0
+			save()
+		_prev_tick = now
+		
+	func get_time_left() -> float:
+		return maxf(0.0, duration - get_elapsed())
+		
+	func get_elapsed() -> float:
+		if is_running:
+			var now := Time.get_unix_time_from_system()
+			if save_time > 0:
+				return accumulated_time + (Time.get_unix_time_from_system() - save_time)
+			else:
+				return accumulated_time + (Time.get_unix_time_from_system() - start_time)
+		return accumulated_time
+	
+	# ##########################################################################
+	# Persistence
+	# ##########################################################################
+
+	func save():
+		var data = to_dict()
+		var file = FileAccess.open(save_path, FileAccess.WRITE)
+		if file:
+			file.store_string(JSON.stringify(data))
+			file.close()
+
+
+	func restore() -> bool:
+		if not FileAccess.file_exists(save_path):
+			return false
+		
+		var file := FileAccess.open(save_path, FileAccess.READ)
+		if file == null:
+			Utils.logerror(\"LockedSession: could not open save file\")
+			return false
+		
+		var content = file.get_as_text()
+		file.close()
+		
+		var data = JSON.parse_string(content)
+		if data == null:
+			Utils.logerror(\"LockedSession: corrupt save file - discarding\")
+			return false
+		
+		from_dict(data)
+		
+		if is_finished and is_running:
+			Utils.logdebug(\"LockedSession: session.is_finished and session.is_finished both 'true' on restore()\")
+		
+		# If session was active before shutdown,
+		# we resume automatically
+		if is_running:
+			return resume()
+		else:
+			return false
+		
+		
+	func to_dict() -> Dictionary:
+		var now := Time.get_unix_time_from_system()
+		if save_time > 0:
+			accumulated_time += now - save_time
+		else:
+			accumulated_time += now - start_time
+		save_time = now
+		var data := {
+			\"behavior\": behavior,
+			\"duration\": duration,
+			\"start_time\": start_time,
+			\"save_time\": save_time,
+			\"accumulated_time\": accumulated_time,
+			\"origin_start_time\": origin_start_time,
+			\"origin_duration\": origin_duration,
+			\"is_running\": is_running,
+			\"is_finished\": is_finished,
+			\"cycles\": []
+		}
+		for c in cycles:
+			data[\"cycles\"].append(c.to_dict())
+		return data
+
+	func from_dict(d: Dictionary) -> void:
+		behavior = d.get(\"behavior\", Behavior.RESUME_TIMER)
+		duration = d.get(\"duration\", 0.0)
+		start_time = d.get(\"start_time\", 0.0)
+		save_time = d.get(\"save_time\", 0.0)
+		accumulated_time = d.get(\"accumulated_time\", 0.0)
+		origin_start_time =  d.get(\"origin_start_time\", 0.0)
+		origin_duration =  d.get(\"origin_duration\", 0.0)
+		is_running = d.get(\"is_running\", false)
+		is_finished = d.get(\"is_finished\", false)
+		
+		cycles.clear()
+		for c_data in d.get(\"cycles\", []):
+			cycles.append(CycleRunner.from_dict(c_data))
+		
+
+	func delete_save():
+		if FileAccess.file_exists(save_path):
+			DirAccess.remove_absolute(save_path)
+"
+
+[node name="Node" type="Node"]
+script = SubResource("GDScript_25wtq")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ModVersion" type="RichTextLabel" parent="VBoxContainer"]
+layout_mode = 2
+bbcode_enabled = true
+text = "[font_size=12]Lock and play v0.1[/font_size]"
+fit_content = true
+scroll_active = false
+horizontal_alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer"]
+visible = false
+layout_mode = 2
+
+[node name="DebugButton" type="Button" parent="VBoxContainer/HBoxContainer"]
+layout_mode = 2
+text = "Debug"
+
+[node name="ModsHFlowContainer" type="HFlowContainer" parent="VBoxContainer"]
+clip_contents = true
+layout_mode = 2
+
+[node name="CardDummy" type="PanelContainer" parent="VBoxContainer/ModsHFlowContainer"]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="VBoxContainer/ModsHFlowContainer/CardDummy"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 8
+
+[node name="VBoxContainer" type="VBoxContainer" parent="VBoxContainer/ModsHFlowContainer/CardDummy/MarginContainer"]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/ModsHFlowContainer/CardDummy/MarginContainer/VBoxContainer"]
+layout_mode = 2
+alignment = 1
+
+[node name="IconLabel" type="Label" parent="VBoxContainer/ModsHFlowContainer/CardDummy/MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "🧩"
+
+[node name="TitleLabel" type="Label" parent="VBoxContainer/ModsHFlowContainer/CardDummy/MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"HeaderLarge"
+theme_override_font_sizes/font_size = 20
+text = "Wheel of fortune"
+horizontal_alignment = 1
+
+[node name="EnableModCheckButton" type="CheckButton" parent="VBoxContainer/ModsHFlowContainer/CardDummy/MarginContainer/VBoxContainer/HBoxContainer"]
+layout_direction = 3
+layout_mode = 2
+disabled = true
+alignment = 1
+
+[node name="DescLabel" type="Label" parent="VBoxContainer/ModsHFlowContainer/CardDummy/MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+text = "Not implemented yet.
+Coming soon!"
+autowrap_mode = 3
+text_overrun_behavior = 3
+max_lines_visible = 3
+
+[node name="ConfigureButton" type="Button" parent="VBoxContainer/ModsHFlowContainer/CardDummy/MarginContainer/VBoxContainer"]
+layout_mode = 2
+disabled = true
+text = "⚙️ Configure"
+
+[node name="TimerCheckPeriodic" type="Timer" parent="."]
+autostart = true
+
+[connection signal="pressed" from="VBoxContainer/HBoxContainer/DebugButton" to="." method="_on_debug_button_pressed"]
+[connection signal="timeout" from="TimerCheckPeriodic" to="." method="_on_timer_check_periodic_timeout"]

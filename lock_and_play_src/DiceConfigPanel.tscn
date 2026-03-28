@@ -1,0 +1,225 @@
+[gd_scene load_steps=2 format=3 uid="uid://ffu4u1dk2wup"]
+
+[sub_resource type="GDScript" id="GDScript_pj74k"]
+script/source = "extends VBoxContainer
+
+var Data = preload(\"Data.gd\")
+
+var time_selector: HBoxContainer
+var wait_time_selector: HBoxContainer
+var regularity_selector: HBoxContainer
+var actions_container: VBoxContainer
+
+
+func commit_changes():
+	# saves changes 
+	Data.games.dice.config_data.time_mult = time_selector.get_time_in_seconds()
+	Data.games.dice.config_data.wait_time = wait_time_selector.get_time_in_seconds()
+	Data.games.dice.config_data.runs_count_required = int($RunsCountHBoxContainer/RunsCountSpinBox.value)
+	Data.games.dice.config_data.regularity = regularity_selector.get_time_in_seconds()
+	
+	# delete the previous actions list:
+	Data.games.dice.config_data.punishment = []
+	for action in actions_container.get_actions_list():
+		Data.games.dice.config_data.punishment.append({
+			\"origin\": Data.Action.ORIGIN_DICE_PENALTIES,
+			\"type\": action.type,
+			\"arg\": action.arg,
+			\"arg_type\": action.arg_type,
+		})
+	
+func cancel_changes():
+	# cancel changes - nothing to do - might be used one day
+	pass
+
+
+func _ready() -> void:
+	# time multiplier setup
+	time_selector = preload(\"duration_selector.tscn\").instantiate()
+	$TimeMultHBoxContainer.add_child(time_selector)
+	time_selector.set_time_in_seconds(Data.games.dice.config_data.time_mult)
+	
+	# wait time setup
+	wait_time_selector = preload(\"duration_selector.tscn\").instantiate()
+	$WaitTimeHBoxContainer.add_child(wait_time_selector)
+	wait_time_selector.set_time_in_seconds(Data.games.dice.config_data.wait_time)
+	
+	# regularity setup
+	#runs_count_required = preload(\"duration_selector.tscn\").instantiate()
+	#$RegularityHBoxContainer/RunsCountLabel.add_sibling(runs_count_required)
+	$RunsCountHBoxContainer/RunsCountSpinBox.value = Data.games.dice.config_data.runs_count_required
+	
+	# regularity setup
+	regularity_selector = preload(\"duration_selector.tscn\").instantiate()
+	# place it before RegularityWarningTooltip
+	$RegularityHBoxContainer/TooltipAnchor.add_sibling(regularity_selector)
+	regularity_selector.set_time_in_seconds(Data.games.dice.config_data.regularity)
+	
+	# renable it after testing:
+	if Data.app_info.build != Data.BUILD_DEBUG:
+		regularity_selector.hide_minutes()
+	
+	# actions container 
+	actions_container = preload(\"actions_container.tscn\").instantiate()
+	actions_container.set_actions_preset(Data.actions_preset[\"dice\"].duplicate())
+	actions_container.load_actions_from_config(Data.games.dice.config_data.punishment)
+	$PunishmentHBoxContainer.add_child(actions_container)
+	
+	
+	# limit amount of days the user can set
+	var spin_days := time_selector.spin_days as SpinBox
+	spin_days.max_value = Data.games.dice.config_data.time_mult_max_days
+	
+	#$TimeTitleLabel.theme_type_variation = \"HeaderSmall\"
+	
+	# warning message for SUBTRACT_OFF_TIME lock mode
+	if HS.config_reader.phs_lock_data.behavior == \"2\":
+		var ttext := \"⚠️ Warning! \"\\
+			+ \"Your lock behavior when restarting Hotscreen is set to \\\"Subtract Off Time\\\", \\n\"\\
+			+ \"which means that 'regularity' will be accounted for, even when Hotscreen is not running.\\n\"\\
+			+ \"For example, if regularity is set to '1 hour' and if you turn off your computer for 10 hours, \\n\"\\
+			+ \"punishments will be applied 10 times the next time Hotscreen is launched!\"
+		
+		$RegularityHBoxContainer/RegularityWarningTooltip.visible = true
+		$RegularityHBoxContainer/RegularityWarningTooltip.tooltip_text = ttext
+"
+
+[node name="VBoxContainer" type="VBoxContainer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 8
+script = SubResource("GDScript_pj74k")
+
+[node name="MainTitle" type="Label" parent="."]
+layout_mode = 2
+theme_type_variation = &"HeaderLarge"
+text = "🎲 Configure Dice"
+
+[node name="MainDesc" type="Label" parent="."]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+text = "With every action, you and the bot roll a dice. If you do more than the bot, time is removed. If the bot does more, time is added."
+autowrap_mode = 3
+
+[node name="HSeparator" type="HSeparator" parent="."]
+layout_mode = 2
+
+[node name="TimeMultTitle" type="Label" parent="."]
+layout_mode = 2
+theme_type_variation = &"HeaderMedium"
+text = "Time Multiplier"
+
+[node name="TimeMultDesc" type="Label" parent="."]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+text = "The difference between the two dice will be multiplied by this time."
+autowrap_mode = 3
+
+[node name="RichTextLabel" type="RichTextLabel" parent="."]
+visible = false
+layout_mode = 2
+bbcode_enabled = true
+text = "[font_size=20]Time multiplier[/font_size]
+The difference between the two dice will be multiplied by this time.
+"
+fit_content = true
+
+[node name="TimeMultHBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="HSeparator2" type="HSeparator" parent="."]
+layout_mode = 2
+
+[node name="WaitTimeTitle" type="Label" parent="."]
+layout_mode = 2
+theme_type_variation = &"HeaderMedium"
+text = "Wait Duration"
+
+[node name="WaitTimeDesc" type="Label" parent="."]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+text = "After playing, you will have to wait this duration before using it again."
+autowrap_mode = 3
+
+[node name="WaitTimeHBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="HSeparator3" type="HSeparator" parent="."]
+layout_mode = 2
+
+[node name="PenaltiesTitle" type="Label" parent="."]
+layout_mode = 2
+theme_type_variation = &"HeaderMedium"
+text = "Penalties"
+
+[node name="PenaltiesDesc" type="Label" parent="."]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+text = "Receive penalties when you do not perform actions on time."
+autowrap_mode = 3
+
+[node name="RunsCountHBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="RunsCountLabel" type="Label" parent="RunsCountHBoxContainer"]
+layout_mode = 2
+text = "☑️ Dice rolls required:"
+
+[node name="TooltipAnchor" type="Label" parent="RunsCountHBoxContainer"]
+layout_mode = 2
+tooltip_text = "This determines how many times you need to complete the action during each regularity period."
+mouse_filter = 1
+theme_type_variation = &"HeaderSmall"
+text = "🛈"
+
+[node name="RunsCountSpinBox" type="SpinBox" parent="RunsCountHBoxContainer"]
+layout_mode = 2
+rounded = true
+
+[node name="RegularityHBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+size_flags_vertical = 0
+theme_override_constants/separation = 8
+
+[node name="RegularityLabel" type="Label" parent="RegularityHBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 0
+text = "🕰️ Regularity:"
+
+[node name="TooltipAnchor" type="Label" parent="RegularityHBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 0
+tooltip_text = "Set how often this habit should be completed. Leave it to 0 if you don't want penalties enabled"
+mouse_filter = 1
+theme_type_variation = &"HeaderSmall"
+text = "🛈"
+
+[node name="RegularityWarningTooltip" type="RichTextLabel" parent="RegularityHBoxContainer"]
+visible = false
+layout_mode = 2
+bbcode_enabled = true
+text = "[color=crimson][font_size=20]🛈[/font_size][/color]"
+fit_content = true
+scroll_active = false
+autowrap_mode = 0
+
+[node name="PunishmentHBoxContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PunishmentLabel" type="Label" parent="PunishmentHBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 0
+text = "🔨 Punishment:"
+
+[node name="TooltipAnchor" type="Label" parent="PunishmentHBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 0
+tooltip_text = "Penalty for not rolling the dice in time"
+mouse_filter = 1
+theme_type_variation = &"HeaderSmall"
+text = "🛈"

@@ -1,0 +1,133 @@
+[gd_scene load_steps=2 format=3 uid="uid://dedl3vlpwby27"]
+
+[sub_resource type="GDScript" id="GDScript_7glwp"]
+script/source = "extends HBoxContainer
+
+var Utils = preload(\"Utils.gd\")
+var Data = preload(\"Data.gd\")
+
+@onready var action_dropdown := $ActionDropDown
+@onready var line_edit: LineEdit = $LineEdit
+
+var duration_selector # placeholder
+
+var _available_actions: Array
+
+# {\"type\": action.type, \"arg\": action.arg, \"arg_type\": action.arg_type}
+var _loaded_action = null
+
+func set_actions_preset(preset: Array):
+	#Utils.logdebug(\"actions preset: %s\" % str(preset))
+	if preset and preset is Array and preset.size() > 0:
+		_available_actions = preset
+
+func load_action_from_config(action: Dictionary):
+	Utils.logdebug(\"actions loaded from saved settings: %s\" % str(action))
+	_loaded_action = action
+
+
+func get_action_selected() -> Dictionary:
+	var index = action_dropdown.selected
+	var selected_action = _available_actions[index]
+	
+	var arg = null
+	match selected_action.arg_type:
+		Data.Action.ARG_TYPE_INT:
+			# no implemented
+			pass
+		Data.Action.ARG_TYPE_DURATION:
+			arg = duration_selector.get_time_in_seconds()
+		Data.Action.ARG_TYPE_STRING, Data.Action.ARG_TYPE_COLLECTION:
+			arg = line_edit.text
+		_:
+			arg = null
+	
+	return {
+		\"type\": selected_action.type,
+		\"arg\": arg,
+		\"arg_type\": selected_action.arg_type,
+	}
+
+func _ready() -> void:
+	duration_selector = preload(\"duration_selector.tscn\").instantiate()
+	action_dropdown.add_sibling(duration_selector)
+	#duration_selector.make_one_line()
+	duration_selector.set_time_in_seconds()
+	duration_selector.visible = false
+	
+	for el in _available_actions:
+		action_dropdown.add_item(el.name, el.type)
+	
+	# load saved data
+	if _loaded_action:
+		var index = action_dropdown.get_item_index(_loaded_action.type)
+		action_dropdown.select(index)
+		_on_item_selected(index)
+		if _loaded_action.arg_type == Data.Action.ARG_TYPE_DURATION:
+			duration_selector.set_time_in_seconds(_loaded_action.arg)
+		elif _loaded_action.arg_type in [Data.Action.ARG_TYPE_STRING, Data.Action.ARG_TYPE_COLLECTION]:
+			line_edit.text = _loaded_action.arg
+	else:
+		# select first item if no saved data exists
+		_on_item_selected(0)
+	
+	action_dropdown.item_selected.connect(_on_item_selected)
+
+
+func _on_item_selected(index: int):
+	
+	# the order of the items is the same as the actions preset, so we can use index
+	var selected_action = _available_actions[index]
+	
+	line_edit.visible = selected_action.arg_type in [Data.Action.ARG_TYPE_STRING, Data.Action.ARG_TYPE_COLLECTION]
+	duration_selector.visible = selected_action.arg_type == Data.Action.ARG_TYPE_DURATION
+	
+	# TODO
+	# should we empty fields when deselected?
+	
+	# Tooltip visible for freeze for ex
+	if selected_action.has(\"tooltip\") and not selected_action.tooltip.is_empty():
+		if selected_action.has(\"tooltip_color\"):
+			var color = Utils.escape_bbcode(selected_action.tooltip_color)
+			$TooltipAnchorRich.text = \"[color=%s][font_size=20]🛈[/font_size][/color]\" % color
+		else:
+			$TooltipAnchorRich.text = \"[font_size=20]🛈[/font_size]\"
+		$TooltipAnchorRich.visible = true
+		$TooltipAnchorRich.tooltip_text = selected_action.tooltip
+	else:
+		$TooltipAnchorRich.visible = false
+		$TooltipAnchorRich.tooltip_text = \"\"
+	
+	# Tooltip visible for freeze for ex
+	if selected_action.has(\"placeholder\") and not selected_action.placeholder.is_empty():
+		line_edit.placeholder_text = selected_action.placeholder
+	else:
+		line_edit.placeholder_text = \"\"
+"
+
+[node name="ActionSelector" type="HBoxContainer"]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 31.0
+grow_horizontal = 2
+size_flags_horizontal = 3
+script = SubResource("GDScript_7glwp")
+
+[node name="ActionDropDown" type="OptionButton" parent="."]
+layout_mode = 2
+size_flags_vertical = 0
+
+[node name="LineEdit" type="LineEdit" parent="."]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TooltipAnchorRich" type="RichTextLabel" parent="."]
+visible = false
+layout_mode = 2
+tooltip_text = "test"
+bbcode_enabled = true
+text = "[color=coral][font_size=20]🛈[/font_size][/color]"
+fit_content = true
+scroll_active = false
+autowrap_mode = 0

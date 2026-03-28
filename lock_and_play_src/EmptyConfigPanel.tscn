@@ -1,0 +1,30 @@
+[gd_scene load_steps=2 format=3 uid="uid://bvnrk15xqed7s"]
+
+[sub_resource type="GDScript" id="GDScript_5f22m"]
+script/source = "extends Control
+
+
+# Called when the node enters the scene tree for the first time.
+func _ready() -> void:
+	pass
+
+
+# Called every frame. 'delta' is the elapsed time since the previous frame.
+func _process(delta: float) -> void:
+	pass
+"
+
+[node name="EmptyConfigPanel" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = SubResource("GDScript_5f22m")
+
+[node name="Label" type="Label" parent="."]
+layout_mode = 0
+offset_right = 192.0
+offset_bottom = 92.0
+text = "Not Implemented"

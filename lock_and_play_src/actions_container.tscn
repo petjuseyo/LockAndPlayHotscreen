@@ -1,0 +1,111 @@
+[gd_scene load_steps=2 format=3 uid="uid://cveshbrmk6gh6"]
+
+[sub_resource type="GDScript" id="GDScript_w144p"]
+script/source = "extends VBoxContainer
+
+var Utils = preload(\"Utils.gd\")
+
+@onready var add_button: Button = $AddButton
+@onready var line_model: HBoxContainer = $ActionLineContainerModel
+
+# list of HBox containing actions
+var lines_added := []
+# preset of actions available
+var actions_preset := []
+# actions loaded from config
+var _loaded_actions := []
+
+
+# {\"type\": action.type, \"arg\": action.arg, \"arg_type\": action.arg_type}
+func load_actions_from_config(actions: Array):
+	Utils.logdebug(\"load_actions_from_config \" + str(actions))
+	for action in actions:
+		_loaded_actions.append({\"type\": action.type, \"arg\": action.arg, \"arg_type\": action.arg_type})
+	
+	
+func set_actions_preset(preset: Array):
+	actions_preset = preset.duplicate()
+	
+func get_actions_list():
+	var arr = []
+	for action in lines_added:
+		if action == null:
+			continue
+		var action_selector = action.get_node(\"ActionSelector\")
+		arr.append(action_selector.get_action_selected())
+	return arr
+
+
+func _ready() -> void:
+	line_model.visible = false
+	add_button.pressed.connect(add_new_line)
+	for action in _loaded_actions:
+		add_new_line(action)
+
+func add_new_line(action: Dictionary = {}) -> void:
+	
+	var new_line := line_model.duplicate()
+	new_line.visible = true
+	
+	var action_selector = preload(\"action_selector.tscn\").instantiate()
+	action_selector.set_actions_preset(actions_preset.duplicate())
+	action_selector.load_action_from_config(action)
+	
+	new_line.add_child(action_selector)
+	
+	# add new line to the tree
+	add_child(new_line)
+	move_child(new_line, add_button.get_index())
+	
+	# delete button
+	var remove_btn = Button.new()
+	remove_btn.text = \"-\"
+	remove_btn.custom_minimum_size = Vector2i(30, 0)
+	remove_btn.tooltip_text = \"Delete action\"
+	remove_btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	remove_btn.pressed.connect(remove_line.bind(lines_added.size()))
+	new_line.add_child(remove_btn)
+	
+	lines_added.append(new_line)
+	
+
+func remove_line(line_index: int) -> void:
+	# don't use pop_at() because it shifts position and we need to keep the same
+	# indexes
+	var line = lines_added.get(line_index)
+	line.queue_free()
+
+	
+	
+	
+	
+"
+
+[node name="ActionsContainer" type="VBoxContainer"]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 66.0
+grow_horizontal = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 8
+script = SubResource("GDScript_w144p")
+
+[node name="ActionLineContainerModel" type="HBoxContainer" parent="."]
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="AddButton" type="Button" parent="."]
+layout_mode = 2
+size_flags_vertical = 3
+tooltip_text = "Add a new action to the list"
+text = "+"
+
+[node name="DeleteButton" type="Button" parent="."]
+visible = false
+custom_minimum_size = Vector2(30, 0)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 0
+text = "-"

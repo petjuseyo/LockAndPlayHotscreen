@@ -1,0 +1,109 @@
+[gd_scene load_steps=2 format=3 uid="uid://b3ublyat7bgrp"]
+
+[sub_resource type="GDScript" id="GDScript_0arh3"]
+script/source = "extends HBoxContainer
+
+var Utils = preload(\"Utils.gd\")
+
+@onready var spin_days := $VBoxContainerDays/SpinBoxDays
+@onready var spin_hours := $VBoxContainerHours/SpinBoxHours
+@onready var spin_minutes := $VBoxContainerMinutes/SpinBoxMinutes
+
+@onready var label_days := $VBoxContainerDays/LabelDays
+@onready var label_hours := $VBoxContainerHours/LabelHours
+@onready var label_minutes := $VBoxContainerMinutes/LabelMinutes
+
+
+func get_time_in_seconds() -> int:
+	return Utils.time_to_seconds(spin_days.value, spin_hours.value, spin_minutes.value)
+
+func set_time_in_seconds(seconds: int=0) -> void:
+	var dhm = Utils.seconds_to_dhm(seconds)
+	spin_days.value = dhm.days
+	spin_hours.value = dhm.hours
+	spin_minutes.value = dhm.minutes
+
+## gives choice to display days, hours and minutes or not
+func visibility(days: bool=true, hours: bool=true, minutes: bool=true) -> void:
+	hide_days(!days)
+	hide_hours(!hours)
+	hide_minutes(!minutes)
+	
+func hide_days(hide: bool=true) -> void:
+	spin_days.visible = !hide
+	label_days.visible = !hide
+	
+func hide_hours(hide: bool=true) -> void:
+	spin_hours.visible = !hide
+	label_hours.visible = !hide
+	
+func hide_minutes(hide: bool=true) -> void:
+	spin_minutes.visible = !hide
+	label_minutes.visible = !hide
+	
+func make_one_line():
+	label_days.reparent(self)
+	label_hours.reparent(self)
+	label_minutes.reparent(self)
+	
+	move_child(label_days, $VBoxContainerDays.get_index() + 1)
+	move_child(label_hours, $VBoxContainerHours.get_index() + 1)
+	move_child(label_minutes, $VBoxContainerMinutes.get_index() + 1)
+	
+	$VSeparator1.visible = true
+	$VSeparator2.visible = true
+"
+
+[node name="DurationSelector" type="HBoxContainer"]
+script = SubResource("GDScript_0arh3")
+
+[node name="VBoxContainerDays" type="VBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="SpinBoxDays" type="SpinBox" parent="VBoxContainerDays"]
+layout_mode = 2
+max_value = 30.0
+rounded = true
+custom_arrow_step = 1.0
+select_all_on_focus = true
+
+[node name="LabelDays" type="Label" parent="VBoxContainerDays"]
+layout_mode = 2
+text = "days"
+
+[node name="VSeparator1" type="VSeparator" parent="."]
+visible = false
+layout_mode = 2
+
+[node name="VBoxContainerHours" type="VBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="SpinBoxHours" type="SpinBox" parent="VBoxContainerHours"]
+layout_mode = 2
+max_value = 23.0
+value = 1.0
+rounded = true
+custom_arrow_step = 1.0
+select_all_on_focus = true
+
+[node name="LabelHours" type="Label" parent="VBoxContainerHours"]
+layout_mode = 2
+text = "hours"
+
+[node name="VSeparator2" type="VSeparator" parent="."]
+visible = false
+layout_mode = 2
+
+[node name="VBoxContainerMinutes" type="VBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="SpinBoxMinutes" type="SpinBox" parent="VBoxContainerMinutes"]
+layout_mode = 2
+max_value = 59.0
+rounded = true
+custom_arrow_step = 1.0
+select_all_on_focus = true
+
+[node name="LabelMinutes" type="Label" parent="VBoxContainerMinutes"]
+layout_mode = 2
+text = "minutes"
