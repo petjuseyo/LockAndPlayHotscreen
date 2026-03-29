@@ -9,7 +9,7 @@
 Each game has it's own game window and settings window. Right now there's only one game: Dice. But more is coming!
 The intended way of using this mod is with Hotscreen auto-starting on windows boot, with a lock behavior of either `Resume Timer` or `Subtract Off Time` when Hotscreen is restarting.
 
-### Dice Game
+### 🎲 Dice Game
 Roll the dice against the computer. If you score lower than the bot, time will be added. If you do better, time will me removed.
 #### Dice Settings
 - Set a time multiplier: the difference between the two dice will be multiplied by this time
@@ -17,7 +17,7 @@ Roll the dice against the computer. If you score lower than the bot, time will b
   - (Optional) Penalties: Receive penalties from the Actions list if you do not play the game in time
   - How many times you have to play the game
   - Regularity: how often do you need to play
-  - Punishments: from adding time, to toggling collection, to OS commands
+  - Punishments: from adding time, to toggling collection, to OS commands, etc...
   
 ---
 
