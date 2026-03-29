@@ -757,13 +757,6 @@ func freeze_lock(action: Dictionary):
 func exec_os_command(action: Dictionary):
 	if action.arg.is_empty():
 		return
-		
-	Utils.loginfo(\"executing user defined OS command: '%s'\" % [action.arg])
-	var pid := OS.create_process(\"cmd.exe\", [\"/C\", action.arg])
-	
-	if pid == -1:
-		Utils.logerror(\"couldn't create process with command '%s'\" % [action.arg])
-		
 	
 	var output: = []
 	var exit_code: = 0
@@ -793,7 +786,9 @@ func exec_os_command_new_process(action: Dictionary):
 	
 	if pid == -1:
 		Utils.logerror(\"couldn't create process with command '%s'\" % [action.arg])
-		
+	else:
+		Utils.loginfo(\"command executed successfully.\")
+		 
 
 
 ##
